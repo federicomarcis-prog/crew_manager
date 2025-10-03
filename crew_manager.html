@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Crew Rotation Manager — Tabs: Contracts & Gantt</title>
+  <link rel="stylesheet" href="https://unpkg.com/frappe-gantt/dist/frappe-gantt.css">
+  <script src="https://unpkg.com/frappe-gantt/dist/frappe-gantt.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <style>
+    :root{--glass: rgba(255,255,255,0.9)}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial; margin:0; height:100vh; display:flex; flex-direction:column; background:#f3f6fb}
+    header{padding:12px 18px; background:#0b2545; color:white; display:flex; align-items:center; gap:12px}
+    header h1{font-size:16px;margin:0}
+    .tabs{display:flex; border-bottom:1px solid #e6eefc}
+    .tab{padding:10px 16px; cursor:pointer; user-select:none; border-top-left-radius:6px; border-top-right-radius:6px;}
+    .tab.active{background:white; border:1px solid #e6eefc; border-bottom:none;}
+    .tab-content{flex:1; padding:12px; background:white; overflow:auto; height:calc(100vh - 60px);}
+    table{width:100%; border-collapse:collapse}
+    th,td{padding:6px 8px; text-align:left; border-bottom:1px solid #eef3fb; font-size:13px}
+    input[type=text], input[type=date]{width:100%; padding:6px;border:1px solid #e6eefc;border-radius:4px}
+    .row-actions{display:flex; gap:6px}
+    .small{font-size:12px; padding:6px 8px}
+    .controls{display:flex; gap:8px; margin-bottom:8px; align-items:center}
+    button{background:#0b2545;color:white;border:none;padding:8px 10px;border-radius:6px;cursor:pointer}
+    button.ghost{background:transparent;color:#0b2545;border:1px solid rgba(11,37,69,0.08)}
+    #gantt{height:700px; width:100%;}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Crew Rotation Manager</h1>
+    <div style="opacity:0.85">Tabs: Contracts & Gantt. Drag/resize Gantt bars or edit table. Saves to localStorage.</div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="contracts">Contracts</div>
+    <div class="tab" data-tab="gantt">Gantt Chart</div>
+  </div>
+
+  <div class="tab-content" id="contracts-tab">
+    <div class="controls">
+      <button id="addBtn">+ Add contract</button>
+      <button id="saveBtn" class="ghost">Save</button>
+      <button id="loadSample" class="ghost">Load sample</button>
+      <button id="exportBtn" class="ghost">Export JSON</button>
+      <button id="clearBtn" class="ghost">Clear</button>
+    </div>
+    <table id="contractsTable">
+      <thead>
+        <tr><th>Crew</th><th>Rank/Role</th><th>Ship</th><th>Start</th><th>End</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="tab-content" id="gantt-tab" style="display:none">
+    <div id="gantt"></div>
+  </div>
+
+<script>
+const uid = () => 'c'+Math.random().toString(36).slice(2,9);
+const today = () => dayjs().format('YYYY-MM-DD');
+const addDays = (d, n) => dayjs(d).add(n,'day').format('YYYY-MM-DD');
+
+let contracts = [];
+const STORAGE_KEY = 'crew_gantt_contracts_final';
+function saveToStorage(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(contracts)); }
+function loadFromStorage(){ const s = localStorage.getItem(STORAGE_KEY); if(s){ contracts = JSON.parse(s); } else contracts = []; }
+
+const sample = [
+  {id:uid(), crew:'John Smith', role:'Captain', ship:'MV Aurora', start:addDays(today(), -20), end:addDays(today(), 10)},
+  {id:uid(), crew:'Maria Lopez', role:'Chief Engineer', ship:'MV Aurora', start:addDays(today(), -5), end:addDays(today(), 25)},
+  {id:uid(), crew:'Ahmed Khan', role:'Deck Officer', ship:'SS Neptune', start:addDays(today(), -2), end:addDays(today(), 18)},
+  {id:uid(), crew:'Li Wei', role:'Cook', ship:'SS Neptune', start:addDays(today(), 5), end:addDays(today(), 35)},
+];
+
+// -------- Table ----------
+const tbody = document.querySelector('#contractsTable tbody');
+function renderTable(){
+  tbody.innerHTML = '';
+  contracts.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" data-id="${c.id}" data-field="crew" value="${escapeHtml(c.crew)}"></td>
+      <td><input type="text" data-id="${c.id}" data-field="role" value="${escapeHtml(c.role||'')}"></td>
+      <td><input type="text" data-id="${c.id}" data-field="ship" value="${escapeHtml(c.ship)}"></td>
+      <td><input class="date" type="text" data-id="${c.id}" data-field="start" value="${c.start}"></td>
+      <td><input class="date" type="text" data-id="${c.id}" data-field="end" value="${c.end}"></td>
+      <td class="row-actions"><button data-id="${c.id}" class="small del">Delete</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  document.querySelectorAll('input.date').forEach(el=>{
+    flatpickr(el, {dateFormat:'Y-m-d', onChange: (s,v)=>{ onTableEdit(el.dataset.id, el.dataset.field, v) }});
+    el.addEventListener('change', e=> onTableEdit(el.dataset.id, el.dataset.field, e.target.value));
+  });
+  document.querySelectorAll('input[type=text]:not(.date)').forEach(el=>{
+    el.addEventListener('change', e=> onTableEdit(el.dataset.id, el.dataset.field, e.target.value));
+  });
+  document.querySelectorAll('button.del').forEach(b=> b.addEventListener('click', e=>{
+    contracts = contracts.filter(x=>x.id!==b.dataset.id);
+    rerenderAll();
+  }));
+}
+function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }
+function onTableEdit(id, field, value){
+  const idx = contracts.findIndex(x=>x.id===id);
+  if(idx===-1) return;
+  contracts[idx][field]=value;
+  if(field==='start' || field==='end'){
+    if(dayjs(contracts[idx].end).isBefore(dayjs(contracts[idx].start))){ alert('End date cannot be before start date'); return; }
+  }
+  saveToStorage();
+  if(document.querySelector('.tab.active').dataset.tab==='gantt') rerenderGantt();
+}
+
+// -------- Gantt ----------
+let gantt = null;
+function toGanttTasks(){
+  return contracts.map(c=>({id:c.id, name:`${c.crew} — ${c.ship}`, start:new Date(c.start), end:new Date(c.end), progress:0}));
+}
+function rerenderGantt(){
+  const tasks = toGanttTasks();
+  const $g = document.getElementById('gantt'); $g.innerHTML='';
+  if(tasks.length===0){ $g.innerHTML="<div style='padding:1em;color:#666'>No contracts to show</div>"; return; }
+  gantt = new Gantt($g, tasks, {
+    view_mode:'Week',
+    on_date_change: function(task, start, end){
+      const idx = contracts.findIndex(x=>x.id===task.id);
+      if(idx!==-1){
+        contracts[idx].start = dayjs(start).format('YYYY-MM-DD');
+        contracts[idx].end = dayjs(end).format('YYYY-MM-DD');
+        renderTable(); saveToStorage();
+      }
+    }
+  });
+}
+
+// -------- Tabs ----------
+function showGanttTab(){
+  document.getElementById('contracts-tab').style.display='none';
+  document.getElementById('gantt-tab').style.display='block';
+  setTimeout(()=>rerenderGantt(), 50);
+}
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    if(tab.dataset.tab==='contracts'){
+      document.getElementById('contracts-tab').style.display='block';
+      document.getElementById('gantt-tab').style.display='none';
+    } else {
+      showGanttTab();
+    }
+  });
+});
+
+// -------- UI Functions ----------
+function rerenderAll(){ renderTable(); if(document.querySelector('.tab.active').dataset.tab==='gantt') rerenderGantt(); }
+function addContract(){ contracts.push({id:uid(), crew:'New Crew', role:'Rank', ship:'New Ship', start:today(), end:addDays(today(),14)}); rerenderAll(); }
+function loadSample(){ contracts=JSON.parse(JSON.stringify(sample)); rerenderAll(); saveToStorage(); }
+function clearAll(){ if(!confirm('Clear all contracts?')) return; contracts=[]; rerenderAll(); localStorage.removeItem(STORAGE_KEY); }
+function exportJSON(){ const blob = new Blob([JSON.stringify(contracts,null,2)], {type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='contracts.json'; a.click(); URL.revokeObjectURL(url); }
+
+// -------- Events ----------
+document.getElementById('addBtn').addEventListener('click', addContract);
+document.getElementById('saveBtn').addEventListener('click', ()=>saveToStorage());
+document.getElementById('loadSample').addEventListener('click', ()=>{if(confirm('Load sample data (overwrites current)?')) loadSample();});
+document.getElementById('exportBtn').addEventListener('click', exportJSON);
+document.getElementById('clearBtn').addEventListener('click', clearAll);
+
+// -------- Init ----------
+loadFromStorage(); if(contracts.length===0) contracts=JSON.parse(JSON.stringify(sample)); rerenderAll();
+</script>
+</body>
+</html>
